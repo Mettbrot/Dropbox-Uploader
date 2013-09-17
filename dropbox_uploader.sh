@@ -779,19 +779,56 @@ function db_unlink
 #$1 = Remote file to delete
 function db_delete
 {
-    local FILE_DST=$(normalize_path "$1")
+    local HANDLE=$1
+    if [[ ${HANDLE: -1} == "*" ]]; then
+        HANDLE=${HANDLE%?}
+        local FILE_DST=$(normalize_path "$HANDLE")
+        local TYPE=$(db_stat "$FILE_DST")
+        if [[ $TYPE == "DIR" ]]; then
+            print " > Deleting everything in \"$FILE_DST\"...\n"    
+        
+            #Extracting directory content [...]
+            #and replacing "}, {" with "}\n{"
+            #I don't like this piece of code... but seems to be the only way to do this with SED, writing a portable code...
+            local DIR_CONTENT=$(sed -n 's/.*: \[{\(.*\)/\1/p' "$RESPONSE_FILE" | sed 's/}, *{/}\{/g')
 
-    print " > Deleting \"$FILE_DST\"... "
-    $CURL_BIN $CURL_ACCEPT_CERTIFICATES -s --show-error --globoff -i -o "$RESPONSE_FILE" --data "oauth_consumer_key=$APPKEY&oauth_token=$OAUTH_ACCESS_TOKEN&oauth_signature_method=PLAINTEXT&oauth_signature=$APPSECRET%26$OAUTH_ACCESS_TOKEN_SECRET&oauth_timestamp=$(utime)&oauth_nonce=$RANDOM&root=$ACCESS_LEVEL&path=$(urlencode "$FILE_DST")" "$API_DELETE_URL" 2> /dev/null
-    check_curl_status
+            #Extracing files and subfolders
+            TMP_DIR_CONTENT_FILE="${RESPONSE_FILE}_$RANDOM"
+            echo "$DIR_CONTENT" | sed -n 's/.*"path": *"\([^"]*\)",.*"is_dir": *\([^"]*\),.*/\1:\2/p' > $TMP_DIR_CONTENT_FILE
 
-    #Check
-    if grep -q "HTTP/1.1 200 OK" "$RESPONSE_FILE"; then
-        print "DONE\n"
+            #For each line...
+            while read -r line; do
+    
+                local FILE=${line%:*}
+                FILE=${FILE##*/}
+                
+                db_delete "$FILE_DST/$FILE"
+    
+            done < $TMP_DIR_CONTENT_FILE
+    
+            rm -fr $TMP_DIR_CONTENT_FILE
+        else
+            print "FAILED"
+        fi
     else
-        print "FAILED\n"
-        ERROR_STATUS=1
+        local FILE_DST=$(normalize_path "$HANDLE")
+
+        print " > Deleting \"$FILE_DST\"... "
+        $CURL_BIN $CURL_ACCEPT_CERTIFICATES -s --show-error --globoff -i -o "$RESPONSE_FILE" --data "oauth_consumer_key=$APPKEY&oauth_token=$OAUTH_ACCESS_TOKEN&oauth_signature_method=PLAINTEXT&oauth_signature=$APPSECRET%26$OAUTH_ACCESS_TOKEN_SECRET&oauth_timestamp=$(utime)&oauth_nonce=$RANDOM&root=$ACCESS_LEVEL&path=$(urlencode "$FILE_DST")" "$API_DELETE_URL" 2> /dev/null
+        check_curl_status
+    
+        #Check
+        if grep -q "HTTP/1.1 200 OK" "$RESPONSE_FILE"; then
+            print "DONE\n"
+        else
+            print "FAILED\n"
+            ERROR_STATUS=1
+        fi
     fi
+  
+
+
+
 }
 
 #Move/Rename a remote file
